@@ -17,6 +17,7 @@ library(tidyverse)
 library(lubridate)
 library(leaflet)
 library(arsenal)
+library(R.utils)
 ```
 
 ```{r}
