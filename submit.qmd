@@ -1,11 +1,17 @@
 ---
+<<<<<<< HEAD
 title: ""
 author: ""
+=======
+title: "PM566 Lab5"
+author: "Weixi Pan"
+>>>>>>> 7dc12bf (update1)
 format:
   html:
     embed-resources: true
 ---
 
+<<<<<<< HEAD
 ## Quarto
 
 Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
@@ -26,3 +32,249 @@ You can add options to executable code like this
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
+=======
+## Setup 
+
+```{r setup, include=FALSE}
+library(data.table)
+library(dplyr)
+library(dtplyr)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(arsenal)
+```
+
+```{r}
+# Download the data
+stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
+stations[, USAF := as.integer(USAF)]
+
+# Dealing with NAs and 999999
+stations[, USAF   := fifelse(USAF == 999999, NA_integer_, USAF)]
+stations[, CTRY   := fifelse(CTRY == "", NA_character_, CTRY)]
+stations[, STATE  := fifelse(STATE == "", NA_character_, STATE)]
+
+# Selecting the three relevant columns, and keeping unique records
+stations <- unique(stations[, list(USAF, CTRY, STATE)])
+
+# Dropping NAs
+stations <- stations[!is.na(USAF)]
+
+# Removing duplicates
+stations[, n := 1:.N, by = .(USAF)]
+stations <- stations[n == 1,][, n := NULL]
+```
+
+```{r import-data, cache=TRUE}
+if (!file.exists("met_all.gz"))
+  download.file(
+    url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+    destfile = "met_all.gz",
+    method   = "libcurl",
+    timeout  = 60
+    )
+met <- data.table::fread("met_all.gz")
+```
+
+merge the data
+
+```{r}
+met2 <- merge(
+  # Data
+  x     = met,      
+  y     = stations, 
+  # List of variables to match
+  by.x  = "USAFID",
+  by.y  = "USAF", 
+  # Which obs to keep?
+  all.x = TRUE,      
+  all.y = FALSE
+  )
+```
+
+# Q1
+
+## **Representative station for the US**
+
+What is the median station in terms of temperature, wind speed, and atmospheric pressure? Look for the three weather stations that best represent continental US using the `quantile()` function. Do these three coincide?
+
+```{r}
+#the median station in terms of temperature, wind speed, and atmospheric pressure
+metmedian <- met2[, .(
+    temp_med      = median(temp, na.rm=TRUE),
+    wind.sp_med   = median(wind.sp, na.rm=TRUE),
+    atm.press_med = median(atm.press, na.rm = TRUE)
+    ),
+    by=USAFID
+    ] 
+```
+
+```{r}
+#Look for the three weather stations that best represent continental US using the quantile() function.
+med_met <- met2 %>%
+    group_by(STATE, year, month, day) %>%
+    mutate(
+      temp2 = quantile(temp, probs=0.5, na.rm=TRUE),
+      windsp2 = quantile(wind.sp, probs=0.5, na.rm=TRUE),
+      atmpress2 = quantile(atm.press, probs=0.5, na.rm=TRUE)
+      ) %>% collect()
+```
+
+Median:
+
+temp:20.6
+
+wind.sp:2.6
+
+atm.press:1015
+
+```{r}
+metmedian[, temp_distmedian:=abs(temp_med-20.6)][order(temp_distmedian)]
+metmedian[, windsp_distmedian:=abs(wind.sp_med-2.6)][order(windsp_distmedian)]
+metmedian[, atmpress_distmedian:=abs(atm.press_med-1015)][order(atmpress_distmedian)]
+
+metmedian[which.min(temp_distmedian)]
+metmedian[which.min(windsp_distmedian)]
+metmedian[which.min(atmpress_distmedian)]
+```
+
+The 3 stations are USAFID 722950, 720113 and 722057.
+
+# Q2
+
+## **Representative station per state**
+
+Just like the previous question, you are asked to identify what is the most representative, the median, station per state. This time, instead of looking at one variable at a time, look at the euclidean distance. If multiple stations show in the median, select the one located at the lowest latitude.
+
+```{r}
+metmedian2 <- met2[,.(
+    temp_med      = median(temp, na.rm=TRUE),
+    wind.sp_med   = median(wind.sp, na.rm=TRUE),
+    atm.press_med = median(atm.press, na.rm = TRUE),
+    lat=median(lat, na.rm = TRUE),
+    lon=median(lon, na.rm = TRUE)
+    ), 
+    by=c('USAFID', 'STATE')
+    ] 
+
+met_avg <-
+  met2[, .(tempavg = mean(temp,na.rm=T),
+          windspavg=mean(wind.sp,na.rm=T),
+          atm.pressavg=mean(atm.press,na.rm=T)),by=.(USAFID,STATE)]
+
+metmedian2 <- merge(
+  x=metmedian2,
+  y=met_avg,
+  by.x = 'STATE',
+  by.y= 'STATE',
+  all.x=TRUE,
+  all.y=FALSE,
+  allow.cartesian=TRUE
+)
+
+metmedian2[,temp_dist := tempavg - temp_med]
+metmedian2[,windsp_dist := windspavg - wind.sp_med]
+metmedian2[,atmpress_dist := atm.pressavg - atm.press_med]
+metmedian2[,eucdist :=temp_dist^2 +windsp_dist^2 ]
+
+station2 <- subset(metmedian2, select = c(eucdist, lat, lon, STATE))
+station2 <- station2[,.(eucdist=min(eucdist,na.rm=TRUE),
+                        lat=min(lat,na.rm = TRUE),
+                        lon=min(lon,na.rm = TRUE)),
+                       by='STATE']
+
+test <- merge(x=metmedian2,
+  y=station2,
+  by.x = c('eucdist','STATE'),
+  by.y= c('eucdist','STATE'),
+  all.x=FALSE,
+  all.y=TRUE
+)
+
+dim(test)
+
+```
+
+# Q3
+
+For each state, identify what is the station that is closest to the mid-point of the state. Combining these with the stations you identified in the previous question, use `leaflet()` to visualize all \~100 points in the same figure, applying different colors for those identified in this question.
+
+```{r}
+
+
+map <- leaflet() %>% 
+  # The looks of the Map
+  addProviderTiles('CartoDB.Positron') %>% 
+  # Some circles
+  addCircles(
+    data=station2,
+    lat = ~lat, lng=~lon,
+    color ='green',
+    opacity = 1, fillOpacity = 1, radius = 500
+    ) %>%
+   addCircles(
+    data=test,
+    lat = ~lat.x, lng=~lon.x,
+    color ='red',
+    opacity = 0.5, fillOpacity = 0.5, radius = 500
+    )
+map
+```
+
+# Q4
+
+## **Means of means**
+
+Using the `quantile()` function, generate a summary table that shows the number of states included, average temperature, wind-speed, and atmospheric pressure by the variable \"average temperature level,\" which you\'ll need to create.
+
+Start by computing the states' average temperature. Use that measurement to classify them according to the following criteria:
+
+-   low: temp \< 20
+
+-   Mid: temp \>= 20 and temp \< 25
+
+-   High: temp \>= 25
+
+```{r}
+met_avg2<- lazy_dt(met2, immutable = FALSE)
+met_avg2 <- met2 %>%
+    group_by(STATE) %>%
+    mutate(tempavg = mean(temp,na.rm=T),
+          windspavg=mean(wind.sp,na.rm=T),
+          atm.pressavg=mean(atm.press,na.rm=T)
+          ) %>% collect()
+```
+
+```{r}
+is.data.table(met_avg2) == TRUE
+setDT(met_avg2)
+met_avg2[, avg_templevel   := fifelse(tempavg<20, "low",
+                               fifelse(tempavg>=25,'high','mid'))]
+
+table(met_avg2$avg_templevel)
+```
+
+Once you are done with that, you can compute the following:
+
+-   Number of entries (records),
+
+-   Number of NA entries,
+
+-   Number of stations,
+
+-   Number of states included, and
+
+-   Mean temperature, wind-speed, and atmospheric pressure.
+
+All by the levels described before.
+
+```{r}
+  met_avg2 %>% group_by(STATE) %>%
+    summarise(
+      tempavg      = mean(temp, na.rm=TRUE),
+      windspavg   = mean(wind.sp, na.rm=TRUE),
+      atm.pressavg = mean(atm.press, na.rm = TRUE)
+    ) %>% arrange(STATE) 
+```
+>>>>>>> 7dc12bf (update1)
